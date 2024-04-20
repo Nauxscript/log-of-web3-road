@@ -24,4 +24,15 @@ contract MyToken {
   function balanceOf(address account) public view returns (uint256) {
     return balances[account];
   }
+
+  function transfer(address recipient, uint256 amount) public {
+    // Check if the sender has enough balance
+    require(balances[msg.sender] >= amount, "Insufficient balance");
+
+    // Transfer the amount
+    balances[msg.sender] -= amount;
+    balances[recipient] += amount;
+
+    return true
+  }
 }
