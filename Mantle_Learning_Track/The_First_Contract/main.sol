@@ -19,4 +19,9 @@ contract MyToken {
     totalSupply += amount;
 
   }
+
+  // Returns the balance of the given account
+  function balanceOf(address account) public view returns (uint256) {
+    return balances[account];
+  }
 }
