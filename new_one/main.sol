@@ -55,4 +55,12 @@ contract MyNFT {
       }
     }
   }
+
+  function burn(uint256 _tokenId) public {
+    require(_tokenId >= 1 && _tokenId < nextTokenId, "Invalid token ID");
+    Token storage token = tokens[_tokenId];
+    require(msg.sender == token.owner, "You don't own this token");
+    deleteById(msg.sender, _tokenId);
+    delete tokens[_tokenId];
+  }
 }
