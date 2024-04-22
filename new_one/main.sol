@@ -46,13 +46,13 @@ contract MyNFT {
   }
 
   function deleteById(address /*account*/, uint256 _tokenId) internal {
-    uint256[] storage tokens = ownerTokens[msg.sender];
-    for (uint256 i = 0; i < tokens.length; i++) {
-      if (tokens[i] == _tokenId) {
-        tokens[i] = tokens[tokens.length - 1];
-        tokens.pop();
+    uint256[] storage ownerTokenList = ownerTokens[msg.sender];
+    for (uint256 i = 0; i < ownerTokenList.length; i++) {
+      if (ownerTokenList[i] == _tokenId) {
+        ownerTokenList[i] = ownerTokenList[ownerTokenList.length - 1];
+        ownerTokenList.pop();
         break;
-      }     
+      }
     }
   }
 }
