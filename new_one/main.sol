@@ -31,4 +31,28 @@ contract MyNFT {
   function getTokensByOwner(address _owner) public view returns(uint256[] memory) {
     return ownerTokens[_owner];
   }
+
+  function transfer(address _to, uint256 _tokenId) public {
+    require(_to != address(0), "Invalid recipient");
+    require(_tokenId >= 1 && _tokenId < nextTokenId, "Invalid tokenID");
+    Token storage token = tokens[_tokenId];
+
+    require(msg.sender == token.owner, "You don't own this token");
+
+    token.owner = _to;
+
+    deleteById(msg.sender, _tokenId);
+    ownerTokens[_to].push(_tokenId);
+  }
+
+  function deleteById(address /*account*/, uint256 _tokenId) internal {
+    uint256[] storage tokens = ownerTokens[msg.sender];
+    for (uint256 i = 0; i < tokens.length; i++) {
+      if (tokens[i] == _tokenId) {
+        tokens[i] = tokens[tokens.length - 1];
+        tokens.pop();
+        break;
+      }     
+    }
+  }
 }
