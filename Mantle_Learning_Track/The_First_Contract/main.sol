@@ -25,7 +25,7 @@ contract MyToken {
     return balances[account];
   }
 
-  function transfer(address recipient, uint256 amount) public {
+  function transfer(address recipient, uint256 amount) public returns (bool) {
     // Check if the sender has enough balance
     require(balances[msg.sender] >= amount, "Insufficient balance");
 
@@ -33,6 +33,6 @@ contract MyToken {
     balances[msg.sender] -= amount;
     balances[recipient] += amount;
 
-    return true
+    return true;
   }
 }
