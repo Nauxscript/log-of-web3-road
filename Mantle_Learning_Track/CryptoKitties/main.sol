@@ -28,4 +28,18 @@ contract SimpleCryptoKitties is ERC721 {
     _mint(owner, _tokenIdCounter);
     return _tokenIdCounter++;
   }
+
+  function breed(uint256 momId, uint256 dadId) public returns(uint256) {
+    require(momId != dadId, "both ids are the same!");
+    require(momId == msg.sender, "Not the owner of the mom kitty");
+    require(dadId == msg.sender, "Not the owner of the dad kitty");
+
+    Kitty memory mom = kitties[momId];
+    Kitty memory dad = kitties[dadId];
+
+    uint256 newGeneration = (mom.generation > dad.generation ? mom.generation : dad.generation) + 1;
+    uint256 newGenes = (mom.genes + dad.genes) / 2;
+
+    return _createKitty(momId, dadId, newGeneration, newGenes, msg.sender);
+  }
 }
