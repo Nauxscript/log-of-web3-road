@@ -15,4 +15,6 @@ contract SimpleCryptoKitties is ERC721 {
 
   mapping (uint256 => Kitty) public kitties;
 
+  constructor() ERC721("SimpleCryptoKitties", "SCK") {}
+
 }
