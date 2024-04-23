@@ -17,6 +17,11 @@ contract SimpleCryptoKitties is ERC721 {
 
   constructor() ERC721("SimpleCryptoKitties", "SCK") {}
 
+  function createKittyGen0() public returns(uint256) {
+    uint256 genes = uint256(keccak256(abi.encodePacked(block.timestamp, _tokenIdCounter)));
+    return _createKitty(0, 0, 0, genes, msg.sender);
+  }
+
   function _createKitty(uint256 momId, uint256 dadId, uint256 generation, uint256 genes, address owner) private returns(uint256) {
 
     kitties[_tokenIdCounter] = Kitty(genes, block.timestamp, momId, dadId, generation);
