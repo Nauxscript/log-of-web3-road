@@ -1,115 +1,218 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.18;
+pragma solidity ^0.8.7;
 
-import "@chainlink/contracts/src/v0.8/VRFConsumerBase.sol";
+import {ConfirmedOwner} from "@chainlink/contracts@1.1.0/src/v0.8/shared/access/ConfirmedOwner.sol";
+import {VRFV2WrapperConsumerBase} from "@chainlink/contracts@1.1.0/src/v0.8/vrf/VRFV2WrapperConsumerBase.sol";
+import {LinkTokenInterface} from "@chainlink/contracts@1.1.0/src/v0.8/shared/interfaces/LinkTokenInterface.sol";
 
 struct ProbabilityItem {
-  string name;
-  uint256 p;
+    string name;
+    uint256 p;
 }
 
 struct Rule {
-  uint256 ruleId;
-  address owner;
-  ProbabilityItem[] lotteryProbabilities;
-  uint256 createTime;
-  bool available;
+    uint256 ruleId;
+    address owner;
+    ProbabilityItem[] lotteryProbabilities;
+    uint256 createTime;
+    bool available;
 }
 
-contract Lottery is VRFConsumerBase {
+struct RequestStatus {
+    uint256 paid; // amount paid in link
+    bool fulfilled; // whether the request has been successfully fulfilled
+    uint256[] randomWords;
+    address user;
+    uint256 ruleId;
+    string reward;
+}
 
-  uint256 nextRuleId = 1;
-  mapping (uint256 => Rule) ruleset;
-  mapping (address => uint256[]) owner2rules;
+contract Lottery is VRFV2WrapperConsumerBase, ConfirmedOwner {
+    event RequestSent(uint256 requestId, uint32 numWords);
+    event RequestFulfilled(
+        uint256 requestId,
+        uint256[] randomWords,
+        uint256 payment
+    );
+    event RewardSelected(address user, uint256 requestId, string reward);
 
-  bytes32 internal keyHash;
-  uint256 internal fee;
-  uint256 private randomResult;
+    uint256 nextRuleId = 1;
+    mapping(uint256 => Rule) ruleset;
+    mapping(address => uint256[]) owner2rules;
 
-  mapping(bytes32 => uint256) requestToRuleId;
+    bytes32 internal keyHash;
+    uint256 internal fee;
 
-  constructor() 
-        VRFConsumerBase(
-            0xf720CF1B963e0e7bE9F58fd471EFa67e7bF00cfb, // VRF Coordinator
-            0x20fE562d797A42Dcb3399062AE9546cd06f63280  // LINK Token
-        )
-    {
-        keyHash = 0xced103054e349b8dfb51352f0f8fa9b5d20dde3d06f9f43cb2b85bc64b238205;
-        fee = 0.1 * 10 ** 18; // 0.1 LINK
-    }
+    uint256 public lastRequestId;
+
+    mapping(uint256 => RequestStatus) public s_requests; /* requestId --> requestStatus */
+
+    uint32 callbackGasLimit = 100000;
+
+    // The default is 3, but you can set this higher.
+    uint16 requestConfirmations = 3;
+
+    // For this example, retrieve 2 random values in one request.
+    // Cannot exceed VRFV2Wrapper.getConfig().maxNumWords.
+    uint32 numWords = 1;
+
+    // Address LINK - hardcoded for Sepolia
+    address linkAddress = 0x779877A7B0D9E8603169DdbD7836e478b4624789;
+
+    // address WRAPPER - hardcoded for Sepolia
+    address wrapperAddress = 0xab18414CD93297B0d12ac29E63Ca20f515b3DB46;
+
+    constructor()
+        ConfirmedOwner(msg.sender)
+        VRFV2WrapperConsumerBase(linkAddress, wrapperAddress)
+    {}
 
     /**
      * Callback function used by VRF Coordinator
      */
-    function fulfillRandomness(bytes32 requestId, uint256 randomness) internal override {
-        randomResult = randomness % 100;
-        // Use the random number to select a reward
-        Rule storage rule = ruleset[requestToRuleId[requestId]];
-        string memory reward = this.select(rule.lotteryProbabilities);
-        // Do something with the reward, e.g., emit an event
-        emit RewardSelected(requestId, reward);
+    // function fulfillRandomness(bytes32 requestId, uint256 randomness) internal override {
+    //     randomResult = randomness % 100;
+    //     // Use the random number to select a reward
+    //     Rule storage rule = ruleset[requestToRuleId[requestId]];
+    //     string memory reward = this.select(rule.lotteryProbabilities);
+    //     // Do something with the reward, e.g., emit an event
+    //     emit RewardSelected(requestId, reward);
+    // }
+
+    function createRule(
+        string[] memory rewardNames,
+        uint256[] memory rewardProbabilitis
+    ) public returns (uint256) {
+        require(rewardNames.length == rewardProbabilitis.length);
+        uint256 totalProbability = 0;
+
+        for (uint256 i = 0; i < rewardProbabilitis.length; i++) {
+            totalProbability += rewardProbabilitis[i];
+        }
+
+        require(
+            totalProbability == 100,
+            "The total probability should be 100!"
+        );
+
+        uint256 ruleId = nextRuleId++;
+        ruleset[ruleId].ruleId = ruleId;
+        ruleset[ruleId].owner = msg.sender;
+        ruleset[ruleId].createTime = block.timestamp;
+        ruleset[ruleId].available = true;
+
+        for (uint256 i = 0; i < rewardProbabilitis.length; i++) {
+            ProbabilityItem memory newItem = ProbabilityItem(
+                rewardNames[i],
+                rewardProbabilitis[i]
+            );
+            ruleset[ruleId].lotteryProbabilities.push(newItem);
+        }
+
+        owner2rules[msg.sender].push(ruleId);
+        return ruleId;
     }
 
-  function createRule(string[] memory rewardNames, uint256[] memory rewardProbabilitis) public returns(uint256) {
-    require(rewardNames.length == rewardProbabilitis.length);
-    uint256 totalProbability = 0;
-
-    for (uint256 i = 0; i < rewardProbabilitis.length; i++) {
-      totalProbability += rewardProbabilitis[i];
+    function getRules() public view returns (uint256[] memory) {
+        return owner2rules[msg.sender];
     }
 
-    require(totalProbability == 100, "The total probability should be 100!");
-
-    uint256 ruleId = nextRuleId++;
-    ruleset[ruleId].ruleId = ruleId;
-    ruleset[ruleId].owner = msg.sender;
-    ruleset[ruleId].createTime = block.timestamp;
-    ruleset[ruleId].available = true;
-
-    for (uint256 i = 0; i < rewardProbabilitis.length; i++) {
-      ProbabilityItem memory newItem = ProbabilityItem(rewardNames[i], rewardProbabilitis[i]);
-      ruleset[ruleId].lotteryProbabilities.push(newItem);
+    function getRule(uint256 ruleId) public view returns (Rule memory) {
+        return ruleset[ruleId];
     }
 
-    owner2rules[msg.sender].push(ruleId);   
-    return ruleId;
-  }
-
-  function getRules() view public returns(uint256[] memory) {
-    return owner2rules[msg.sender];
-  }
-
-  function getRule(uint256 ruleId) view public returns(Rule memory) {
-    return ruleset[ruleId];
-  }
-
-  function select(ProbabilityItem[] memory probabilities) view external returns (string memory) {
-        
-        uint sum = 0;
-        for(uint i = 0; i < probabilities.length; i++) {
+    function select(uint256 randomResult, ProbabilityItem[] memory probabilities)
+        external
+        pure
+        returns (string memory)
+    {
+        uint256 sum = 0;
+        for (uint256 i = 0; i < probabilities.length; i++) {
             sum += probabilities[i].p;
-            if(randomResult < sum) {
+            if (randomResult < sum) {
                 return probabilities[i].name;
             }
         }
 
-        return '';
+        return "";
     }
 
-    function getReward(uint256 ruleId) public returns(bytes32) {
-        // Rule storage rule = ruleset[ruleId];
-        // return this.select(rule.lotteryProbabilities);
-        require(LINK.balanceOf(address(this)) >= fee, "Not enough LINK - fill contract with faucet");
-        bytes32 requestId = requestRandomness(keyHash, fee);
-        requestToRuleId[requestId] = ruleId;
+    // function getReward(uint256 ruleId) public returns (bytes32) {
+    //     uint256 requestId = requestRandomness(keyHash, fee);
+    //     return requestId;
+    // }
+
+
+    function getReward(uint256 ruleId)
+        external
+        onlyOwner
+        returns (uint256 requestId)
+    {
+        requestId = requestRandomness(
+            callbackGasLimit,
+            requestConfirmations,
+            numWords
+        );
+        s_requests[requestId] = RequestStatus({
+            paid: VRF_V2_WRAPPER.calculateRequestPrice(callbackGasLimit),
+            randomWords: new uint256[](0),
+            fulfilled: false,
+            user: msg.sender,
+            ruleId: ruleId,
+            re
+        });
+        lastRequestId = requestId;
+        emit RequestSent(requestId, numWords);
         return requestId;
     }
 
-  fallback() external {
-    revert("something wrong");
-  }
+    function fulfillRandomWords(
+        uint256 _requestId,
+        uint256[] memory _randomWords
+    ) internal override {
+        require(s_requests[_requestId].paid > 0, "request not found");
+        s_requests[_requestId].fulfilled = true;
+        s_requests[_requestId].randomWords = _randomWords;
+        emit RequestFulfilled(
+            _requestId,
+            _randomWords,
+            s_requests[_requestId].paid
+        );
 
-  event RewardSelected(bytes32 requestId, string reward);
+        uint256 randomResult = _randomWords[0] % 100;
+        // Use the random number to select a reward
+        Rule storage rule = ruleset[s_requests[_requestId].ruleId];
+        string memory reward = this.select(randomResult, rule.lotteryProbabilities);
+
+        emit RewardSelected(s_requests[_requestId].user, _requestId, reward);
+    }
+
+    function getRequestStatus(
+        uint256 _requestId
+    )
+        external
+        view
+        returns (uint256 paid, bool fulfilled, uint256[] memory randomWords)
+    {
+        require(s_requests[_requestId].paid > 0, "request not found");
+        RequestStatus memory request = s_requests[_requestId];
+        return (request.paid, request.fulfilled, request.randomWords);
+    }
+
+    /**
+     * Allow withdraw of Link tokens from the contract
+     */
+    function withdrawLink() public onlyOwner {
+        LinkTokenInterface link = LinkTokenInterface(linkAddress);
+        require(
+            link.transfer(msg.sender, link.balanceOf(address(this))),
+            "Unable to transfer"
+        );
+    }
+
+    fallback() external {
+        revert("something wrong");
+    }
 }
 
 // ["Phone", "Laptop", "Mouse", "Nothing, Damn!"]
