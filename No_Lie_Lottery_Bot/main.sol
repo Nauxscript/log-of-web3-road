@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.7;
 
+import {VRFCoordinatorV2Interface} from "@chainlink/contracts@1.1.0/src/v0.8/vrf/interfaces/VRFCoordinatorV2Interface.sol";
+import {VRFConsumerBaseV2} from "@chainlink/contracts@1.1.0/src/v0.8/vrf/VRFConsumerBaseV2.sol";
 import {ConfirmedOwner} from "@chainlink/contracts@1.1.0/src/v0.8/shared/access/ConfirmedOwner.sol";
-import {VRFV2WrapperConsumerBase} from "@chainlink/contracts@1.1.0/src/v0.8/vrf/VRFV2WrapperConsumerBase.sol";
-import {LinkTokenInterface} from "@chainlink/contracts@1.1.0/src/v0.8/shared/interfaces/LinkTokenInterface.sol";
 
 struct ProbabilityItem {
     string name;
@@ -19,20 +19,19 @@ struct Rule {
 }
 
 struct RequestStatus {
-    uint256 paid; // amount paid in link
     bool fulfilled; // whether the request has been successfully fulfilled
+    bool exists; // whether a requestId exists
     uint256[] randomWords;
     address user;
     uint256 ruleId;
     string reward;
 }
 
-contract Lottery is VRFV2WrapperConsumerBase, ConfirmedOwner {
+contract Lottery is VRFConsumerBaseV2, ConfirmedOwner {
     event RequestSent(uint256 requestId, uint32 numWords);
     event RequestFulfilled(
         uint256 requestId,
-        uint256[] randomWords,
-        uint256 payment
+        uint256[] randomWords
     );
     event RewardSelected(address user, uint256 requestId, string reward);
 
@@ -40,14 +39,20 @@ contract Lottery is VRFV2WrapperConsumerBase, ConfirmedOwner {
     mapping(uint256 => Rule) ruleset;
     mapping(address => uint256[]) owner2rules;
 
-    bytes32 internal keyHash;
+    bytes32 keyHash =
+        0x474e34a077df58807dbe9c96d3c009b23b3c6d0cce433e59bbf5b34f823bc56c;
     uint256 internal fee;
 
     uint256 public lastRequestId;
 
     mapping(uint256 => RequestStatus) public s_requests; /* requestId --> requestStatus */
 
-    uint32 callbackGasLimit = 100000;
+    // Your subscription ID.
+    uint64 s_subscriptionId;
+
+    uint32 callbackGasLimit = 200000;
+
+    VRFCoordinatorV2Interface COORDINATOR;
 
     // The default is 3, but you can set this higher.
     uint16 requestConfirmations = 3;
@@ -56,16 +61,20 @@ contract Lottery is VRFV2WrapperConsumerBase, ConfirmedOwner {
     // Cannot exceed VRFV2Wrapper.getConfig().maxNumWords.
     uint32 numWords = 1;
 
-    // Address LINK - hardcoded for Sepolia
-    address linkAddress = 0x779877A7B0D9E8603169DdbD7836e478b4624789;
-
     // address WRAPPER - hardcoded for Sepolia
     address wrapperAddress = 0xab18414CD93297B0d12ac29E63Ca20f515b3DB46;
 
-    constructor()
+    constructor(
+        uint64 subscriptionId
+    )
+        VRFConsumerBaseV2(0xab18414CD93297B0d12ac29E63Ca20f515b3DB46)
         ConfirmedOwner(msg.sender)
-        VRFV2WrapperConsumerBase(linkAddress, wrapperAddress)
-    {}
+    {
+        COORDINATOR = VRFCoordinatorV2Interface(
+            0xab18414CD93297B0d12ac29E63Ca20f515b3DB46
+        );
+        s_subscriptionId = subscriptionId;
+    }
 
     /**
      * Callback function used by VRF Coordinator
@@ -87,7 +96,10 @@ contract Lottery is VRFV2WrapperConsumerBase, ConfirmedOwner {
         uint256 totalProbability = 0;
 
         for (uint256 i = 0; i < rewardProbabilitis.length; i++) {
-            totalProbability += rewardProbabilitis[i];
+            if (bytes(rewardNames[i]).length == 0) {
+                revert("Reward cannot be empty");
+            }
+            totalProbability += rewardProbabilitis[i]; 
         }
 
         require(
@@ -137,28 +149,52 @@ contract Lottery is VRFV2WrapperConsumerBase, ConfirmedOwner {
         return "";
     }
 
-    // function getReward(uint256 ruleId) public returns (bytes32) {
-    //     uint256 requestId = requestRandomness(keyHash, fee);
-    //     return requestId;
-    // }
-
-
     function getReward(uint256 ruleId)
         external
         onlyOwner
         returns (uint256 requestId)
     {
-        requestId = requestRandomness(
-            callbackGasLimit,
+        // Will revert if subscription is not set and funded.
+        requestId = COORDINATOR.requestRandomWords(
+            keyHash,
+            s_subscriptionId,
             requestConfirmations,
+            callbackGasLimit,
             numWords
         );
         s_requests[requestId] = RequestStatus({
-            paid: VRF_V2_WRAPPER.calculateRequestPrice(callbackGasLimit),
             randomWords: new uint256[](0),
+            exists: true,
             fulfilled: false,
             user: msg.sender,
             ruleId: ruleId,
+            reward: ""
+        });
+        lastRequestId = requestId;
+        emit RequestSent(requestId, numWords);
+        return requestId;
+    }
+
+    // Assumes the subscription is funded sufficiently.
+    function requestRandomWords()
+        external
+        onlyOwner
+        returns (uint256 requestId)
+    {
+        // Will revert if subscription is not set and funded.
+        requestId = COORDINATOR.requestRandomWords(
+            keyHash,
+            s_subscriptionId,
+            requestConfirmations,
+            callbackGasLimit,
+            numWords
+        );
+        s_requests[requestId] = RequestStatus({
+            randomWords: new uint256[](0),
+            exists: true,
+            fulfilled: false,
+            user: msg.sender,
+            ruleId: 0,
             reward: ""
         });
         lastRequestId = requestId;
@@ -170,13 +206,12 @@ contract Lottery is VRFV2WrapperConsumerBase, ConfirmedOwner {
         uint256 _requestId,
         uint256[] memory _randomWords
     ) internal override {
-        require(s_requests[_requestId].paid > 0, "request not found");
+        require(s_requests[_requestId].exists, "request not found");
         s_requests[_requestId].fulfilled = true;
         s_requests[_requestId].randomWords = _randomWords;
         emit RequestFulfilled(
             _requestId,
-            _randomWords,
-            s_requests[_requestId].paid
+            _randomWords
         );
 
         uint256 randomResult = _randomWords[0] % 100;
@@ -186,28 +221,18 @@ contract Lottery is VRFV2WrapperConsumerBase, ConfirmedOwner {
 
         emit RewardSelected(s_requests[_requestId].user, _requestId, reward);
     }
+    
 
     function getRequestStatus(
         uint256 _requestId
     )
         external
         view
-        returns (uint256 paid, bool fulfilled, uint256[] memory randomWords)
+        returns (bool fulfilled, uint256[] memory randomWords)
     {
-        require(s_requests[_requestId].paid > 0, "request not found");
+        require(s_requests[_requestId].exists, "request not found");
         RequestStatus memory request = s_requests[_requestId];
-        return (request.paid, request.fulfilled, request.randomWords);
-    }
-
-    /**
-     * Allow withdraw of Link tokens from the contract
-     */
-    function withdrawLink() public onlyOwner {
-        LinkTokenInterface link = LinkTokenInterface(linkAddress);
-        require(
-            link.transfer(msg.sender, link.balanceOf(address(this))),
-            "Unable to transfer"
-        );
+        return (request.fulfilled, request.randomWords);
     }
 
     fallback() external {
