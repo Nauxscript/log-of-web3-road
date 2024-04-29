@@ -159,7 +159,7 @@ contract Lottery is VRFV2WrapperConsumerBase, ConfirmedOwner {
             fulfilled: false,
             user: msg.sender,
             ruleId: ruleId,
-            re
+            reward: ""
         });
         lastRequestId = requestId;
         emit RequestSent(requestId, numWords);
