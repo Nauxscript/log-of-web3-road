@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.7;
 
-import {VRFCoordinatorV2Interface} from "@chainlink/contracts@1.1.0/src/v0.8/vrf/interfaces/VRFCoordinatorV2Interface.sol";
-import {VRFConsumerBaseV2} from "@chainlink/contracts@1.1.0/src/v0.8/vrf/VRFConsumerBaseV2.sol";
-import {ConfirmedOwner} from "@chainlink/contracts@1.1.0/src/v0.8/shared/access/ConfirmedOwner.sol";
+import {IVRFCoordinatorV2Plus} from "@chainlink/contracts@1.1.0/src/v0.8/vrf/dev/interfaces/IVRFCoordinatorV2Plus.sol";
+import {VRFConsumerBaseV2Plus} from "@chainlink/contracts@1.1.0/src/v0.8/vrf/dev/VRFConsumerBaseV2Plus.sol";
+import {VRFV2PlusClient} from "@chainlink/contracts@1.1.0/src/v0.8/vrf/dev/libraries/VRFV2PlusClient.sol";
 
 struct ProbabilityItem {
     string name;
@@ -27,7 +27,7 @@ struct RequestStatus {
     string reward;
 }
 
-contract Lottery is VRFConsumerBaseV2, ConfirmedOwner {
+contract Lottery is VRFConsumerBaseV2Plus {
     event RequestSent(uint256 requestId, uint32 numWords);
     event RequestFulfilled(
         uint256 requestId,
@@ -40,7 +40,7 @@ contract Lottery is VRFConsumerBaseV2, ConfirmedOwner {
     mapping(address => uint256[]) owner2rules;
 
     bytes32 keyHash =
-        0x474e34a077df58807dbe9c96d3c009b23b3c6d0cce433e59bbf5b34f823bc56c;
+        0x787d74caea10b2b357790d5b5247c2f63d1d91572a9846f780606e4d953677ae;
     uint256 internal fee;
 
     uint256 public lastRequestId;
@@ -48,11 +48,11 @@ contract Lottery is VRFConsumerBaseV2, ConfirmedOwner {
     mapping(uint256 => RequestStatus) public s_requests; /* requestId --> requestStatus */
 
     // Your subscription ID.
-    uint64 s_subscriptionId;
+    uint256 s_subscriptionId;
 
     uint32 callbackGasLimit = 200000;
 
-    VRFCoordinatorV2Interface COORDINATOR;
+    IVRFCoordinatorV2Plus COORDINATOR;
 
     // The default is 3, but you can set this higher.
     uint16 requestConfirmations = 3;
@@ -65,13 +65,12 @@ contract Lottery is VRFConsumerBaseV2, ConfirmedOwner {
     address wrapperAddress = 0xab18414CD93297B0d12ac29E63Ca20f515b3DB46;
 
     constructor(
-        uint64 subscriptionId
+        uint256 subscriptionId
     )
-        VRFConsumerBaseV2(0xab18414CD93297B0d12ac29E63Ca20f515b3DB46)
-        ConfirmedOwner(msg.sender)
+        VRFConsumerBaseV2Plus(0x9DdfaCa8183c41ad55329BdeeD9F6A8d53168B1B)
     {
-        COORDINATOR = VRFCoordinatorV2Interface(
-            0xab18414CD93297B0d12ac29E63Ca20f515b3DB46
+        COORDINATOR = IVRFCoordinatorV2Plus(
+            0x9DdfaCa8183c41ad55329BdeeD9F6A8d53168B1B
         );
         s_subscriptionId = subscriptionId;
     }
@@ -154,13 +153,25 @@ contract Lottery is VRFConsumerBaseV2, ConfirmedOwner {
         onlyOwner
         returns (uint256 requestId)
     {
-        // Will revert if subscription is not set and funded.
+        // Will revert if subscription is not set and funded. VRF 2.0
+        // requestId = COORDINATOR.requestRandomWords(
+        //     keyHash,
+        //     s_subscriptionId,
+        //     requestConfirmations,
+        //     callbackGasLimit,
+        //     numWords
+        // );
         requestId = COORDINATOR.requestRandomWords(
-            keyHash,
-            s_subscriptionId,
-            requestConfirmations,
-            callbackGasLimit,
-            numWords
+            VRFV2PlusClient.RandomWordsRequest({
+                keyHash: keyHash,
+                subId: s_subscriptionId,
+                requestConfirmations: requestConfirmations,
+                callbackGasLimit: callbackGasLimit,
+                numWords: numWords,
+                extraArgs: VRFV2PlusClient._argsToBytes(
+                    VRFV2PlusClient.ExtraArgsV1({nativePayment: false})
+                )
+            })
         );
         s_requests[requestId] = RequestStatus({
             randomWords: new uint256[](0),
@@ -182,12 +193,24 @@ contract Lottery is VRFConsumerBaseV2, ConfirmedOwner {
         returns (uint256 requestId)
     {
         // Will revert if subscription is not set and funded.
+        // requestId = COORDINATOR.requestRandomWords(
+        //     keyHash,
+        //     s_subscriptionId,
+        //     requestConfirmations,
+        //     callbackGasLimit,
+        //     numWords
+        // );
         requestId = COORDINATOR.requestRandomWords(
-            keyHash,
-            s_subscriptionId,
-            requestConfirmations,
-            callbackGasLimit,
-            numWords
+            VRFV2PlusClient.RandomWordsRequest({
+                keyHash: keyHash,
+                subId: s_subscriptionId,
+                requestConfirmations: requestConfirmations,
+                callbackGasLimit: callbackGasLimit,
+                numWords: numWords,
+                extraArgs: VRFV2PlusClient._argsToBytes(
+                    VRFV2PlusClient.ExtraArgsV1({nativePayment: false})
+                )
+            })
         );
         s_requests[requestId] = RequestStatus({
             randomWords: new uint256[](0),
@@ -213,12 +236,15 @@ contract Lottery is VRFConsumerBaseV2, ConfirmedOwner {
             _requestId,
             _randomWords
         );
+        this.pickReward(_requestId, _randomWords[0]);
+    }
 
-        uint256 randomResult = _randomWords[0] % 100;
+    function pickReward(uint256 _requestId, uint256 _randomWord) external {
+        uint256 randomResult = _randomWord % 100;
         // Use the random number to select a reward
         Rule storage rule = ruleset[s_requests[_requestId].ruleId];
         string memory reward = this.select(randomResult, rule.lotteryProbabilities);
-
+        s_requests[_requestId].reward = reward;
         emit RewardSelected(s_requests[_requestId].user, _requestId, reward);
     }
     
