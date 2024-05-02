@@ -27,6 +27,13 @@ struct RequestStatus {
     string reward;
 }
 
+struct Result {
+    string reward;
+    uint256 ruleId;
+    uint256 randomWord;
+    uint256 requestId;
+}
+
 contract Lottery is VRFConsumerBaseV2Plus {
     event RequestSent(uint256 requestId, uint32 numWords);
     event RequestFulfilled(
@@ -34,10 +41,14 @@ contract Lottery is VRFConsumerBaseV2Plus {
         uint256[] randomWords
     );
     event RewardSelected(address user, uint256 requestId, string reward);
+    event ResultStored(address user, uint256 requestId, Result result);
 
     uint256 nextRuleId = 1;
     mapping(uint256 => Rule) ruleset;
     mapping(address => uint256[]) owner2rules;
+    mapping(address => Result[]) user2results;
+
+    Result[] allResults;
 
     bytes32 keyHash =
         0x787d74caea10b2b357790d5b5247c2f63d1d91572a9846f780606e4d953677ae;
@@ -50,7 +61,7 @@ contract Lottery is VRFConsumerBaseV2Plus {
     // Your subscription ID.
     uint256 s_subscriptionId;
 
-    uint32 callbackGasLimit = 200000;
+    uint32 callbackGasLimit = 400000;
 
     IVRFCoordinatorV2Plus COORDINATOR;
 
@@ -73,20 +84,11 @@ contract Lottery is VRFConsumerBaseV2Plus {
             0x9DdfaCa8183c41ad55329BdeeD9F6A8d53168B1B
         );
         s_subscriptionId = subscriptionId;
+
     }
 
-    /**
-     * Callback function used by VRF Coordinator
-     */
-    // function fulfillRandomness(bytes32 requestId, uint256 randomness) internal override {
-    //     randomResult = randomness % 100;
-    //     // Use the random number to select a reward
-    //     Rule storage rule = ruleset[requestToRuleId[requestId]];
-    //     string memory reward = this.select(rule.lotteryProbabilities);
-    //     // Do something with the reward, e.g., emit an event
-    //     emit RewardSelected(requestId, reward);
-    // }
-
+    // rewardNames:  ["Phone", "Laptop", "Mouse", "Nothing, Damn!"]
+    // rewardProbabilitis:  [20, 10, 30, 40]
     function createRule(
         string[] memory rewardNames,
         uint256[] memory rewardProbabilitis
@@ -153,14 +155,6 @@ contract Lottery is VRFConsumerBaseV2Plus {
         onlyOwner
         returns (uint256 requestId)
     {
-        // Will revert if subscription is not set and funded. VRF 2.0
-        // requestId = COORDINATOR.requestRandomWords(
-        //     keyHash,
-        //     s_subscriptionId,
-        //     requestConfirmations,
-        //     callbackGasLimit,
-        //     numWords
-        // );
         requestId = COORDINATOR.requestRandomWords(
             VRFV2PlusClient.RandomWordsRequest({
                 keyHash: keyHash,
@@ -181,46 +175,7 @@ contract Lottery is VRFConsumerBaseV2Plus {
             ruleId: ruleId,
             reward: ""
         });
-        lastRequestId = requestId;
-        emit RequestSent(requestId, numWords);
-        return requestId;
-    }
-
-    // Assumes the subscription is funded sufficiently.
-    function requestRandomWords()
-        external
-        onlyOwner
-        returns (uint256 requestId)
-    {
-        // Will revert if subscription is not set and funded.
-        // requestId = COORDINATOR.requestRandomWords(
-        //     keyHash,
-        //     s_subscriptionId,
-        //     requestConfirmations,
-        //     callbackGasLimit,
-        //     numWords
-        // );
-        requestId = COORDINATOR.requestRandomWords(
-            VRFV2PlusClient.RandomWordsRequest({
-                keyHash: keyHash,
-                subId: s_subscriptionId,
-                requestConfirmations: requestConfirmations,
-                callbackGasLimit: callbackGasLimit,
-                numWords: numWords,
-                extraArgs: VRFV2PlusClient._argsToBytes(
-                    VRFV2PlusClient.ExtraArgsV1({nativePayment: false})
-                )
-            })
-        );
-        s_requests[requestId] = RequestStatus({
-            randomWords: new uint256[](0),
-            exists: true,
-            fulfilled: false,
-            user: msg.sender,
-            ruleId: 0,
-            reward: ""
-        });
-        lastRequestId = requestId;
+        lastRequestId = requestId; 
         emit RequestSent(requestId, numWords);
         return requestId;
     }
@@ -236,18 +191,58 @@ contract Lottery is VRFConsumerBaseV2Plus {
             _requestId,
             _randomWords
         );
-        this.pickReward(_requestId, _randomWords[0]);
+        // this.pickReward(_requestId, _randomWords[0]);
+
+        uint256 randomResult = _randomWords[0] % 100;
+        // Use the random number to select a reward
+        Rule storage rule = ruleset[s_requests[_requestId].ruleId];
+        string memory reward = this.select(randomResult, rule.lotteryProbabilities);
+        s_requests[_requestId].reward = reward;
+        emit RewardSelected(s_requests[_requestId].user, _requestId, reward);
+        user2results[s_requests[_requestId].user].push(Result({
+            requestId: _requestId,
+            randomWord: _randomWords[0],
+            ruleId: rule.ruleId,
+            reward: reward
+        }));
     }
 
-    function pickReward(uint256 _requestId, uint256 _randomWord) external {
+    function pickReward(uint256 _requestId, uint256 _randomWord) external  {
         uint256 randomResult = _randomWord % 100;
         // Use the random number to select a reward
         Rule storage rule = ruleset[s_requests[_requestId].ruleId];
         string memory reward = this.select(randomResult, rule.lotteryProbabilities);
         s_requests[_requestId].reward = reward;
         emit RewardSelected(s_requests[_requestId].user, _requestId, reward);
+        user2results[s_requests[_requestId].user].push(Result({
+            requestId: _requestId,
+            randomWord: _randomWord,
+            ruleId: rule.ruleId,
+            reward: reward
+        }));
+        emit ResultStored(s_requests[_requestId].user, _requestId, Result({
+            requestId: _requestId,
+            randomWord: _randomWord,
+            ruleId: rule.ruleId,
+            reward: reward
+        }));
+        allResults.push(Result({
+            requestId: _requestId,
+            randomWord: _randomWord,
+            ruleId: rule.ruleId,
+            reward: reward
+        }));
     }
-    
+
+    function getResults() public view returns(Result[] memory results) {
+        return user2results[msg.sender];
+    }
+
+    function getLastResult() public view returns(Result memory result) {
+        Result[] memory results = this.getResults();
+        require(results.length > 0, "The current user has no lottery results");
+        return results[results.length - 1];
+    }
 
     function getRequestStatus(
         uint256 _requestId
@@ -265,6 +260,3 @@ contract Lottery is VRFConsumerBaseV2Plus {
         revert("something wrong");
     }
 }
-
-// ["Phone", "Laptop", "Mouse", "Nothing, Damn!"]
-// [20, 10, 30, 40]

@@ -64,16 +64,6 @@ function generateRuleId() public pure returns (bytes32) {
 
 ~~### 2. 删除规则~~
 
-#### 入参：规则 ID
-
-#### 校验：
-
-- `msg.sender` 是否是规则的所有者
-
-#### 效果：
-
-- 从 `ruleset` 中删除对应的规则
-
 ~~### 3. 修改规则~~
 
 ### 4. 进行抽奖
@@ -88,7 +78,9 @@ function generateRuleId() public pure returns (bytes32) {
 
 #### 入参：规则 ID
 
-#### 返回：抽奖结果
+#### 返回：抽奖 ID
+
+由于 Chainlink 的随机数接口是异步的，无法在调用后立刻返回结果，而是在 Chainlink 预言机生成有效随机数后，调用合约中实现的 `fulfillRandomWords` 方法，此时合约在次方法内才可以获取到生成的随机数；在请求了 Chainlink VRF 后，其会立刻返回一个 RequestId；则记录这个 RequestId 并于当前抽奖的用户、使用的抽奖规则等做一个映射；在后续 `fulfillRandomWords` 被调用时再使用随机数进行抽奖，生成最终的获奖奖品。
 
 ### 5. 查询所有中奖情况
 
